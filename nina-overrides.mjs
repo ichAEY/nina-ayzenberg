@@ -10,5 +10,9 @@ source = source.replace(
 
 source = source.replaceAll('aria-label="Удобства для визита в NINA"', 'aria-label="Сервис и возможности NINA"');
 
+if (!source.includes("Сервис и возможности")) {
+  throw new Error("Nina amenities heading override was not applied");
+}
+
 fs.writeFileSync(componentPath, source, "utf8");
-console.log("Nina-specific UI overrides applied.");
+console.log("Nina-specific UI overrides applied and verified.");
