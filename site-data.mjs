@@ -21,11 +21,11 @@ export default {
     monogram: "N",
     profession: "мастер маникюра и педикюра",
     heroTitle: "Нина — мастер маникюра и педикюра",
-    heroCopy: "Маникюр, педикюр и дизайн ногтей в частном кабинете в Хорошёво‑Мнёвниках.",
-    experienceYears: "",
-    experienceAria: "",
+    heroCopy: "Профессиональный маникюр и педикюр с вниманием к форме, покрытию и деталям — в частном кабинете в Хорошёво‑Мнёвниках.",
+    experienceYears: "2+",
+    experienceAria: "Более двух лет опыта",
     aboutTitle: "Нина Айзенберг",
-    aboutLead: "Частный мастер маникюра и педикюра в Москве.",
+    aboutLead: "Мастер маникюра и педикюра с опытом более двух лет.",
     aboutParagraphs: [
       "Нина работает с женским и мужским маникюром и педикюром, наращиванием и дизайном ногтей. В карточке мастера также указаны медицинский маникюр и педикюр.",
       "Приём ведётся по предварительной записи. В отзывах чаще всего отмечают аккуратность работы, чистоту кабинета, комфортную атмосферу и внимание к пожеланиям.",
@@ -69,9 +69,9 @@ export default {
   },
 
   images: {
-    portrait: "/assets/client/master.png",
-    about: "/assets/client/glavnaya.jpg",
-    favicon: "/assets/client/master.png",
+    portrait: "/assets/client/glavnaya.jpg",
+    about: "/assets/client/master.png",
+    favicon: "/favicon.svg",
     beforeAfter: [],
     gallery: [
       { src: "/assets/client/portfolio/1.png", alt: "Работа Нины — маникюр 1" },
