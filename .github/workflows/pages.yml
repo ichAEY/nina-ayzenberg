@@ -197,7 +197,7 @@ jobs:
             }));
             if(s.width>s.viewport+2)failures.push(`${name}: horizontal overflow ${s.width}>${s.viewport}`);
             if(s.brokenImages.length)failures.push(`${name}: rendered broken images ${s.brokenImages.join(', ')}`);
-            for(const token of ['Нина','+7 985 777-26-36','Маникюр женский аппаратный','101','2+','Сервис и возможности','Профессиональный маникюр и педикюр'])if(!s.text.includes(token))failures.push(`${name}: missing ${token}`);
+            for(const token of ['Нина','+7 985 777-26-36','Маникюр женский аппаратный','101','2+','СЕРВИС И ВОЗМОЖНОСТИ','Профессиональный маникюр и педикюр'])if(!s.text.includes(token))failures.push(`${name}: missing ${token}`);
             for(const removed of ['Удобства для визита','Всё необходимое для спокойного посещения'])if(s.text.includes(removed))failures.push(`${name}: old copy still present: ${removed}`);
             if(!s.heroSrc.includes('/assets/client/glavnaya.jpg'))failures.push(`${name}: wrong hero image ${s.heroSrc}`);
             if(!s.aboutSrc.includes('/assets/client/master.png'))failures.push(`${name}: wrong about image ${s.aboutSrc}`);
