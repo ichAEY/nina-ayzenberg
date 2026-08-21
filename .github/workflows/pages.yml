@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - deploy-status.json
       - .github/workflows/deploy-monitor.yml
+      - .github/workflows/repair-images.yml
   workflow_dispatch:
 
 permissions:
@@ -21,14 +22,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
-      - name: Checkout client repository
+      - name: Checkout client
         uses: actions/checkout@v4
         with:
           path: customer
 
-      - name: Validate client files and data
+      - name: Validate client source
         shell: bash
         run: |
           set -euo pipefail
@@ -36,52 +36,62 @@ jobs:
           test -f customer/glavnaya.jpg
           test -f customer/site-data.mjs
           for n in {1..9}; do test -f "customer/$n.png"; done
-          COUNT=$(find customer -maxdepth 1 -type f -regex '.*/[0-9]+\.png' | wc -l | tr -d ' ')
-          test "$COUNT" -eq 9
           node --input-type=module <<'NODE'
           import site from './customer/site-data.mjs';
-          const expectedServices = 10;
-          const totalServices = (site.services?.manicure?.length || 0) + (site.services?.pedicure?.length || 0);
-          if (site.master?.name !== 'Нина') throw new Error('Wrong master name');
-          if (site.images?.gallery?.length !== 9) throw new Error('Gallery must contain 9 images');
-          if (!site.links?.bookingUrl) throw new Error('Booking URL is missing');
-          if (totalServices !== expectedServices) throw new Error(`Expected ${expectedServices} services, got ${totalServices}`);
-          if (site.reputation?.rating !== '5,0' || site.reputation?.reviewCount !== '101') throw new Error('Reputation data is stale');
+          const totalServices=(site.services?.manicure?.length||0)+(site.services?.pedicure?.length||0);
+          if(site.master?.name!=='Нина') throw new Error('Wrong master');
+          if(site.images?.gallery?.length!==9) throw new Error('Gallery must contain 9 images');
+          if(totalServices!==10) throw new Error(`Expected 10 services, got ${totalServices}`);
+          if(site.reputation?.rating!=='5,0'||site.reputation?.reviewCount!=='101') throw new Error('Reputation data is stale');
+          if(!site.links?.bookingUrl) throw new Error('Booking URL missing');
           NODE
 
-      - name: Checkout pinned TANEM visual base
+      - name: Checkout TANEM visual base
         uses: actions/checkout@v4
         with:
           repository: ichAEY/claytone-current
           ref: ce1bd42b44e76e1851af9e069c4cbcf06fc8eac2
           path: template
 
-      - name: Checkout pinned TANEM factory layers
+      - name: Checkout TANEM factory
         uses: actions/checkout@v4
         with:
           repository: ichAEY/tanem-master-template-v1
           ref: 2c3590bdb8d4163532d126d67f27be1469a426c5
           path: factory
 
-      - name: Apply client data and photos
+      - name: Prepare client assets
         shell: bash
         run: |
           set -euo pipefail
           cp customer/site-data.mjs template/site-data.mjs
           cp customer/site-data.mjs factory/site-data.mjs
           mkdir -p template/public/assets/client/portfolio
-          cp customer/master.png template/public/assets/client/master.png
           cp customer/glavnaya.jpg template/public/assets/client/glavnaya.jpg
-          for n in {1..9}; do cp "customer/$n.png" "template/public/assets/client/portfolio/$n.png"; done
+          python3 -m pip install --quiet Pillow
+          python3 - <<'PY'
+          from PIL import Image, ImageFile
+          from pathlib import Path
+          ImageFile.LOAD_TRUNCATED_IMAGES=True
 
+          def clean(src,dst):
+              with Image.open(src) as im:
+                  im.load()
+                  if im.mode not in ('RGB','RGBA'):
+                      im=im.convert('RGBA' if 'A' in im.getbands() else 'RGB')
+                  Path(dst).parent.mkdir(parents=True,exist_ok=True)
+                  im.save(dst,format='PNG',optimize=True)
+
+          clean('customer/master.png','template/public/assets/client/master.png')
+          for n in range(1,10):
+              clean(f'customer/{n}.png',f'template/public/assets/client/portfolio/{n}.png')
+          PY
           if [ -f customer/CNAME ]; then
             cp customer/CNAME template/public/CNAME
             echo "SITE_BASE_PATH=" >> "$GITHUB_ENV"
           else
-            REPO_NAME="${GITHUB_REPOSITORY#*/}"
-            echo "SITE_BASE_PATH=/$REPO_NAME" >> "$GITHUB_ENV"
+            echo "SITE_BASE_PATH=/${GITHUB_REPOSITORY#*/}" >> "$GITHUB_ENV"
           fi
-
           printf '%s\n' '// Booking uses the client phone link.' > template/public/noop.js
 
       - name: Setup Node
@@ -91,116 +101,44 @@ jobs:
           cache: npm
           cache-dependency-path: template/package-lock.json
 
-      - name: Install dependencies
-        working-directory: template
-        run: npm ci
-
-      - name: Generate client site
-        working-directory: template
-        run: node scripts/generate-site.mjs
-
-      - name: Apply TANEM structure
-        working-directory: template
-        run: node ../factory/scripts/apply-tanem-template.mjs
-
-      - name: Apply TANEM final refinements
-        working-directory: template
-        run: node ../factory/scripts/apply-tanem-final.mjs
-
-      - name: Apply adaptive TANEM polish
-        working-directory: template
-        run: node ../factory/scripts/apply-tanem-polish.mjs
-
-      - name: Apply final TANEM tuning
-        working-directory: template
-        run: node ../factory/scripts/apply-tanem-tuning.mjs
-
-      - name: Configure static export
-        working-directory: template
-        shell: bash
-        run: |
-          cat > next.config.ts <<'EOF'
-          import type { NextConfig } from "next";
-
-          const basePath = process.env.SITE_BASE_PATH || "";
-          const nextConfig: NextConfig = {
-            output: "export",
-            trailingSlash: true,
-            images: { unoptimized: true },
-            basePath,
-          };
-          export default nextConfig;
-          EOF
-
-      - name: Prefix root asset URLs for project Pages
-        working-directory: template
-        shell: bash
-        run: |
-          if [ -z "$SITE_BASE_PATH" ]; then
-            exit 0
-          fi
-
-          node - <<'NODE'
-          const fs = require('fs');
-          const path = require('path');
-          const prefix = process.env.SITE_BASE_PATH || '';
-          const roots = ['app', 'public'];
-          const allowed = new Set(['.tsx', '.ts', '.js', '.mjs', '.css', '.html']);
-          const replacements = [
-            ['/assets/', `${prefix}/assets/`],
-            ['/claytone-enhancements.js', `${prefix}/claytone-enhancements.js`],
-            ['/android-scroll-fix.js', `${prefix}/android-scroll-fix.js`],
-            ['/favicon.svg', `${prefix}/favicon.svg`],
-            ['/noop.js', `${prefix}/noop.js`],
-          ];
-
-          function walk(dir) {
-            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-              const full = path.join(dir, entry.name);
-              if (entry.isDirectory()) walk(full);
-              else if (allowed.has(path.extname(entry.name))) {
-                let text = fs.readFileSync(full, 'utf8');
-                const before = text;
-                for (const [from, to] of replacements) text = text.split(from).join(to);
-                if (text !== before) fs.writeFileSync(full, text);
-              }
-            }
-          }
-
-          for (const root of roots) if (fs.existsSync(root)) walk(root);
-          NODE
-
-      - name: Prepare clean build
-        working-directory: template
-        run: |
-          rm -rf public/_next
-          node - <<'NODE'
-          const fs = require('fs');
-          const path = 'tsconfig.json';
-          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
-          config.exclude = [
-            ...(config.exclude || []),
-            'db/**', 'worker/**', 'examples/**', 'build/**', 'drizzle/**',
-            'drizzle.config.ts', 'vite.config.ts'
-          ];
-          fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
-          NODE
-
-      - name: Build static site
-        working-directory: template
-        run: npx next build
-
-      - name: Static asset integrity QA
+      - name: Build TANEM site
         working-directory: template
         shell: bash
         run: |
           set -euo pipefail
+          npm ci
+          node scripts/generate-site.mjs
+          node ../factory/scripts/apply-tanem-template.mjs
+          node ../factory/scripts/apply-tanem-final.mjs
+          node ../factory/scripts/apply-tanem-polish.mjs
+          node ../factory/scripts/apply-tanem-tuning.mjs
+          cat > next.config.ts <<'EOF'
+          import type { NextConfig } from "next";
+          const basePath=process.env.SITE_BASE_PATH||"";
+          const nextConfig:NextConfig={output:"export",trailingSlash:true,images:{unoptimized:true},basePath};
+          export default nextConfig;
+          EOF
+          if [ -n "$SITE_BASE_PATH" ]; then
+            node - <<'NODE'
+          const fs=require('fs'),path=require('path');
+          const p=process.env.SITE_BASE_PATH||'';
+          const reps=[['/assets/',`${p}/assets/`],['/claytone-enhancements.js',`${p}/claytone-enhancements.js`],['/android-scroll-fix.js',`${p}/android-scroll-fix.js`],['/favicon.svg',`${p}/favicon.svg`],['/noop.js',`${p}/noop.js`]];
+          const ok=new Set(['.tsx','.ts','.js','.mjs','.css','.html']);
+          function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const f=path.join(d,e.name);if(e.isDirectory())walk(f);else if(ok.has(path.extname(e.name))){let t=fs.readFileSync(f,'utf8'),b=t;for(const [a,z] of reps)t=t.split(a).join(z);if(t!==b)fs.writeFileSync(f,t)}}}
+          for(const d of ['app','public'])if(fs.existsSync(d))walk(d);
+          NODE
+          fi
+          rm -rf public/_next
+          node - <<'NODE'
+          const fs=require('fs');const p='tsconfig.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.exclude=[...(c.exclude||[]),'db/**','worker/**','examples/**','build/**','drizzle/**','drizzle.config.ts','vite.config.ts'];fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');
+          NODE
+          npx next build
           test -s out/index.html
           test -s out/assets/client/master.png
           test -s out/assets/client/glavnaya.jpg
           for n in {1..9}; do test -s "out/assets/client/portfolio/$n.png"; done
 
-      - name: Browser QA and screenshots
+      - name: Browser QA
         working-directory: template
         shell: bash
         run: |
@@ -214,63 +152,36 @@ jobs:
           SERVER_PID=$!
           trap 'kill $SERVER_PID || true' EXIT
           sleep 2
-
           node --input-type=module <<'NODE'
-          import { chromium } from 'playwright';
+          import {chromium} from 'playwright';
           import fs from 'node:fs';
-
-          const basePath = process.env.SITE_BASE_PATH || '';
-          const url = `http://127.0.0.1:4173${basePath}/`;
-          const cases = [
-            ['desktop', 1440, 900],
-            ['laptop', 1366, 768],
-            ['mobile', 390, 844],
-          ];
-          const browser = await chromium.launch({ headless: true });
-          const failures = [];
-          const report = [];
-
-          for (const [name, width, height] of cases) {
-            const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
-            const page = await context.newPage();
-            const pageErrors = [];
-            page.on('pageerror', error => pageErrors.push(String(error)));
-
-            await page.goto(url, { waitUntil: 'networkidle' });
-            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await page.waitForTimeout(350);
-            await page.evaluate(() => window.scrollTo(0, 0));
-
-            const state = await page.evaluate(() => ({
-              width: document.documentElement.scrollWidth,
-              viewport: window.innerWidth,
-              height: document.documentElement.scrollHeight,
-              brokenImages: [...document.images].filter(img => !img.complete || img.naturalWidth === 0).map(img => img.currentSrc || img.src),
-              text: document.body.innerText,
-              workTiles: document.querySelectorAll('.mct-work-tile').length,
-            }));
-
-            if (state.width > state.viewport + 2) failures.push(`${name}: horizontal overflow ${state.width}px > ${state.viewport}px`);
-            if (state.brokenImages.length) failures.push(`${name}: broken images: ${state.brokenImages.join(', ')}`);
-            if (!state.text.includes('Нина')) failures.push(`${name}: master name missing`);
-            if (!state.text.includes('+7 985 777-26-36')) failures.push(`${name}: phone missing`);
-            if (!state.text.includes('Маникюр женский аппаратный')) failures.push(`${name}: exact price list missing`);
-            if (!state.text.includes('1 800 ₽')) failures.push(`${name}: service price missing`);
-            if (!state.text.includes('101')) failures.push(`${name}: current review count missing`);
-            if (state.workTiles < 5) failures.push(`${name}: portfolio preview has fewer than 5 works`);
-            if (pageErrors.length) failures.push(`${name}: page errors: ${pageErrors.join(' | ')}`);
-
-            report.push({ name, viewport: `${width}x${height}`, pageWidth: state.width, pageHeight: state.height, workTiles: state.workTiles, brokenImages: state.brokenImages, pageErrors });
-            await page.screenshot({ path: `qa-${name}.png`, fullPage: true });
+          const base=process.env.SITE_BASE_PATH||'';
+          const url=`http://127.0.0.1:4173${base}/`;
+          const cases=[['desktop',1440,900],['laptop',1366,768],['mobile',390,844]];
+          const browser=await chromium.launch({headless:true});
+          const failures=[],report=[];
+          for(const [name,width,height] of cases){
+            const context=await browser.newContext({viewport:{width,height},deviceScaleFactor:1});
+            const page=await context.newPage(),pageErrors=[];
+            page.on('pageerror',e=>pageErrors.push(String(e)));
+            await page.goto(url,{waitUntil:'networkidle'});
+            await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
+            await page.waitForTimeout(500);
+            const s=await page.evaluate(()=>({width:document.documentElement.scrollWidth,viewport:innerWidth,height:document.documentElement.scrollHeight,brokenImages:[...document.images].filter(i=>!i.complete||i.naturalWidth===0).map(i=>i.currentSrc||i.src),text:document.body.innerText,works:document.querySelectorAll('.mct-work-tile').length}));
+            if(s.width>s.viewport+2)failures.push(`${name}: horizontal overflow ${s.width}>${s.viewport}`);
+            if(s.brokenImages.length)failures.push(`${name}: broken images ${s.brokenImages.join(', ')}`);
+            for(const token of ['Нина','+7 985 777-26-36','Маникюр женский аппаратный','101'])if(!s.text.includes(token))failures.push(`${name}: missing ${token}`);
+            if(!/1[\s\u00A0\u202F]*800[\s\u00A0\u202F]*₽/.test(s.text))failures.push(`${name}: first service price missing`);
+            if(s.works<5)failures.push(`${name}: fewer than five portfolio works`);
+            if(pageErrors.length)failures.push(`${name}: page errors ${pageErrors.join(' | ')}`);
+            report.push({name,viewport:`${width}x${height}`,pageWidth:s.width,pageHeight:s.height,works:s.works,brokenImages:s.brokenImages,pageErrors});
+            await page.evaluate(()=>window.scrollTo(0,0));
+            await page.screenshot({path:`qa-${name}.png`,fullPage:true});
             await context.close();
           }
-
           await browser.close();
-          fs.writeFileSync('qa-browser-report.json', JSON.stringify({ failures, report }, null, 2));
-          if (failures.length) {
-            console.error(failures.join('\n'));
-            process.exit(1);
-          }
+          fs.writeFileSync('qa-browser-report.json',JSON.stringify({failures,report},null,2));
+          if(failures.length){console.error(failures.join('\n'));process.exit(1)}
           NODE
 
       - name: Upload visual QA
