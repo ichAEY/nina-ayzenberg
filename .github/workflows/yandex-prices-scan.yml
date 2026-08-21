@@ -1,0 +1,88 @@
+name: Scan public Yandex prices
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and extract public price snippets
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import html as htmlmod
+          import json
+          import re
+          import urllib.request
+
+          urls = [
+              'https://yandex.com/maps/org/master_manikyura_nina_ayzenberg/130913368211/prices/',
+              'https://yandex.com/maps/org/master_manikyura_nina_ayzenberg/130913368211/',
+          ]
+          raw = ''
+          meta = []
+          for url in urls:
+              try:
+                  req = urllib.request.Request(url, headers={
+                      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/151 Safari/537.36',
+                      'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.7',
+                  })
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      text = r.read().decode('utf-8', 'replace')
+                      raw += '\n' + text
+                      meta.append({'url': url, 'status': r.status, 'length': len(text)})
+              except Exception as e:
+                  meta.append({'url': url, 'error': repr(e)})
+
+          # Decode common JSON/HTML escapes enough to make nearby public text readable.
+          decoded = htmlmod.unescape(raw)
+          decoded = decoded.replace('\\u20bd', '₽').replace('\\u00a0', ' ')
+          decoded = decoded.replace('\\/', '/').replace('\\"', '"')
+          decoded = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), decoded)
+          decoded = re.sub(r'\\n|\\r|\\t', ' ', decoded)
+
+          snippets = []
+          patterns = [
+              r'.{0,220}(?:\d[\d\s\u00a0]{0,8})(?:\s*[–—-]\s*\d[\d\s\u00a0]{0,8})?\s*₽.{0,220}',
+              r'.{0,220}(?:price|цена|cost).{0,320}',
+          ]
+          for pattern in patterns:
+              for m in re.finditer(pattern, decoded, flags=re.I | re.S):
+                  s = re.sub(r'<[^>]+>', ' ', m.group(0))
+                  s = re.sub(r'\s+', ' ', s).strip()
+                  if len(s) > 30 and s not in snippets:
+                      snippets.append(s[:700])
+
+          # Also pull likely title/price JSON object fragments.
+          objects = []
+          for m in re.finditer(r'\{[^{}]{0,1200}(?:price|₽)[^{}]{0,1200}\}', decoded, flags=re.I | re.S):
+              s = re.sub(r'\s+', ' ', m.group(0)).strip()
+              if s not in objects:
+                  objects.append(s[:1800])
+
+          result = {
+              'meta': meta,
+              'price_snippets': snippets[:200],
+              'object_fragments': objects[:100],
+          }
+          with open('yandex-prices-scan.json', 'w', encoding='utf-8') as f:
+              json.dump(result, f, ensure_ascii=False, indent=2)
+          print(json.dumps(meta, ensure_ascii=False))
+          print('snippets', len(snippets), 'objects', len(objects))
+          PY
+      - name: Commit scan result
+        shell: bash
+        run: |
+          git config user.name "tanem-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add yandex-prices-scan.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Capture public Yandex price snippets"
+          git push
