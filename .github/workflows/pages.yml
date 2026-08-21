@@ -1,0 +1,284 @@
+name: Build and deploy Nina TANEM site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout client repository
+        uses: actions/checkout@v4
+        with:
+          path: customer
+
+      - name: Validate client files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f customer/master.png
+          test -f customer/glavnaya.jpg
+          test -f customer/site-data.mjs
+          for n in {1..9}; do test -f "customer/$n.png"; done
+          COUNT=$(find customer -maxdepth 1 -type f -regex '.*/[0-9]+\.png' | wc -l | tr -d ' ')
+          test "$COUNT" -eq 9
+          node --input-type=module -e "import('./customer/site-data.mjs').then(({default:s}) => { if (s.master.name !== 'Нина' || s.images.gallery.length !== 9 || !s.links.bookingUrl) process.exit(1); })"
+
+      - name: Checkout pinned TANEM visual base
+        uses: actions/checkout@v4
+        with:
+          repository: ichAEY/claytone-current
+          ref: ce1bd42b44e76e1851af9e069c4cbcf06fc8eac2
+          path: template
+
+      - name: Checkout pinned TANEM factory layers
+        uses: actions/checkout@v4
+        with:
+          repository: ichAEY/tanem-master-template-v1
+          ref: 2c3590bdb8d4163532d126d67f27be1469a426c5
+          path: factory
+
+      - name: Apply client data and photos
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp customer/site-data.mjs template/site-data.mjs
+          cp customer/site-data.mjs factory/site-data.mjs
+          mkdir -p template/public/assets/client/portfolio
+          cp customer/master.png template/public/assets/client/master.png
+          cp customer/glavnaya.jpg template/public/assets/client/glavnaya.jpg
+          for n in {1..9}; do cp "customer/$n.png" "template/public/assets/client/portfolio/$n.png"; done
+
+          if [ -f customer/CNAME ]; then
+            cp customer/CNAME template/public/CNAME
+            echo "SITE_BASE_PATH=" >> "$GITHUB_ENV"
+          else
+            REPO_NAME="${GITHUB_REPOSITORY#*/}"
+            echo "SITE_BASE_PATH=/$REPO_NAME" >> "$GITHUB_ENV"
+          fi
+
+          printf '%s\n' '// Booking uses the client phone link.' > template/public/noop.js
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: template/package-lock.json
+
+      - name: Install dependencies
+        working-directory: template
+        run: npm ci
+
+      - name: Generate client site
+        working-directory: template
+        run: node scripts/generate-site.mjs
+
+      - name: Apply TANEM structure
+        working-directory: template
+        run: node ../factory/scripts/apply-tanem-template.mjs
+
+      - name: Apply TANEM final refinements
+        working-directory: template
+        run: node ../factory/scripts/apply-tanem-final.mjs
+
+      - name: Apply adaptive TANEM polish
+        working-directory: template
+        run: node ../factory/scripts/apply-tanem-polish.mjs
+
+      - name: Apply final TANEM tuning
+        working-directory: template
+        run: node ../factory/scripts/apply-tanem-tuning.mjs
+
+      - name: Configure static export
+        working-directory: template
+        shell: bash
+        run: |
+          cat > next.config.ts <<'EOF'
+          import type { NextConfig } from "next";
+
+          const basePath = process.env.SITE_BASE_PATH || "";
+          const nextConfig: NextConfig = {
+            output: "export",
+            trailingSlash: true,
+            images: { unoptimized: true },
+            basePath,
+          };
+          export default nextConfig;
+          EOF
+
+      - name: Prefix root asset URLs for project Pages
+        working-directory: template
+        shell: bash
+        run: |
+          if [ -z "$SITE_BASE_PATH" ]; then
+            exit 0
+          fi
+
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const prefix = process.env.SITE_BASE_PATH || '';
+          const roots = ['app', 'public'];
+          const allowed = new Set(['.tsx', '.ts', '.js', '.mjs', '.css', '.html']);
+          const replacements = [
+            ['/assets/', `${prefix}/assets/`],
+            ['/claytone-enhancements.js', `${prefix}/claytone-enhancements.js`],
+            ['/android-scroll-fix.js', `${prefix}/android-scroll-fix.js`],
+            ['/favicon.svg', `${prefix}/favicon.svg`],
+            ['/noop.js', `${prefix}/noop.js`],
+          ];
+
+          function walk(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else if (allowed.has(path.extname(entry.name))) {
+                let text = fs.readFileSync(full, 'utf8');
+                const before = text;
+                for (const [from, to] of replacements) text = text.split(from).join(to);
+                if (text !== before) fs.writeFileSync(full, text);
+              }
+            }
+          }
+
+          for (const root of roots) if (fs.existsSync(root)) walk(root);
+          NODE
+
+      - name: Prepare clean build
+        working-directory: template
+        shell: bash
+        run: |
+          rm -rf public/_next
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = 'tsconfig.json';
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+          config.exclude = [
+            ...(config.exclude || []),
+            'db/**', 'worker/**', 'examples/**', 'build/**', 'drizzle/**',
+            'drizzle.config.ts', 'vite.config.ts'
+          ];
+          fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
+          NODE
+
+      - name: Build static site
+        working-directory: template
+        run: npx next build
+
+      - name: Static integrity QA
+        working-directory: template
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f out/index.html
+          test -f out/assets/client/master.png
+          test -f out/assets/client/glavnaya.jpg
+          for n in {1..9}; do test -f "out/assets/client/portfolio/$n.png"; done
+          grep -q 'Нина' out/index.html
+          grep -q '985' out/index.html
+          grep -q '2 000' out/index.html
+          ! grep -qiE '>undefined<|>null<' out/index.html
+
+      - name: Browser QA and screenshots
+        working-directory: template
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+          rm -rf preview
+          mkdir -p "preview${SITE_BASE_PATH}"
+          cp -a out/. "preview${SITE_BASE_PATH}/"
+          python3 -m http.server 4173 --directory preview >/tmp/tanem-preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID || true' EXIT
+          sleep 2
+
+          node --input-type=module <<'NODE'
+          import { chromium } from 'playwright';
+          const basePath = process.env.SITE_BASE_PATH || '';
+          const url = `http://127.0.0.1:4173${basePath}/`;
+          const cases = [
+            ['desktop', 1440, 900],
+            ['laptop', 1366, 768],
+            ['mobile', 390, 844],
+          ];
+          const browser = await chromium.launch({ headless: true });
+          const failures = [];
+
+          for (const [name, width, height] of cases) {
+            const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
+            const page = await context.newPage();
+            const runtimeErrors = [];
+            page.on('pageerror', error => runtimeErrors.push(String(error)));
+            page.on('console', msg => { if (msg.type() === 'error') runtimeErrors.push(msg.text()); });
+            await page.goto(url, { waitUntil: 'networkidle' });
+            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+            await page.waitForTimeout(250);
+            await page.evaluate(() => window.scrollTo(0, 0));
+
+            const state = await page.evaluate(() => ({
+              width: document.documentElement.scrollWidth,
+              viewport: window.innerWidth,
+              brokenImages: [...document.images].filter(img => !img.complete || img.naturalWidth === 0).map(img => img.currentSrc || img.src),
+              text: document.body.innerText,
+            }));
+
+            if (state.width > state.viewport + 2) failures.push(`${name}: horizontal overflow ${state.width}px > ${state.viewport}px`);
+            if (state.brokenImages.length) failures.push(`${name}: broken images: ${state.brokenImages.join(', ')}`);
+            if (!state.text.includes('Нина')) failures.push(`${name}: master name missing`);
+            if (!state.text.includes('+7 985 777-26-36')) failures.push(`${name}: phone missing`);
+            if (runtimeErrors.length) failures.push(`${name}: runtime errors: ${runtimeErrors.join(' | ')}`);
+
+            await page.screenshot({ path: `qa-${name}.png`, fullPage: true });
+            await context.close();
+          }
+
+          await browser.close();
+          if (failures.length) {
+            console.error(failures.join('\n'));
+            process.exit(1);
+          }
+          NODE
+
+      - name: Upload QA screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: nina-visual-qa
+          path: |
+            template/qa-desktop.png
+            template/qa-laptop.png
+            template/qa-mobile.png
+          retention-days: 7
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: template/out
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
