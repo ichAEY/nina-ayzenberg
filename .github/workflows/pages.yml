@@ -35,11 +35,17 @@ jobs:
           test -f customer/master.png
           test -f customer/glavnaya.jpg
           test -f customer/site-data.mjs
+          test -f customer/favicon.svg
+          test -f customer/nina-overrides.mjs
           for n in {1..9}; do test -f "customer/$n.png"; done
           node --input-type=module <<'NODE'
           import site from './customer/site-data.mjs';
           const totalServices=(site.services?.manicure?.length||0)+(site.services?.pedicure?.length||0);
           if(site.master?.name!=='Нина') throw new Error('Wrong master');
+          if(site.master?.experienceYears!=='2+') throw new Error('Experience must be 2+');
+          if(site.images?.portrait!=='/assets/client/glavnaya.jpg') throw new Error('Hero photo must be glavnaya.jpg');
+          if(site.images?.about!=='/assets/client/master.png') throw new Error('About photo must be master.png');
+          if(site.images?.favicon!=='/favicon.svg') throw new Error('TANEM favicon missing');
           if(site.images?.gallery?.length!==9) throw new Error('Gallery must contain 9 images');
           if(totalServices!==10) throw new Error(`Expected 10 services, got ${totalServices}`);
           if(site.reputation?.rating!=='5,0'||site.reputation?.reviewCount!=='101') throw new Error('Reputation data is stale');
@@ -66,6 +72,7 @@ jobs:
           set -euo pipefail
           cp customer/site-data.mjs template/site-data.mjs
           cp customer/site-data.mjs factory/site-data.mjs
+          cp customer/favicon.svg template/public/favicon.svg
           mkdir -p template/public/assets/client/portfolio
           cp customer/glavnaya.jpg template/public/assets/client/glavnaya.jpg
           python3 -m pip install --quiet Pillow
@@ -109,6 +116,7 @@ jobs:
           node ../factory/scripts/apply-tanem-final.mjs
           node ../factory/scripts/apply-tanem-polish.mjs
           node ../factory/scripts/apply-tanem-tuning.mjs
+          node ../customer/nina-overrides.mjs
           cat > next.config.ts <<'EOF'
           import type { NextConfig } from "next";
           const basePath=process.env.SITE_BASE_PATH||"";
@@ -131,6 +139,7 @@ jobs:
           NODE
           npx next build
           test -s out/index.html
+          test -s out/favicon.svg
           test -s out/assets/client/master.png
           test -s out/assets/client/glavnaya.jpg
           for n in {1..9}; do test -s "out/assets/client/portfolio/$n.png"; done
@@ -175,14 +184,28 @@ jobs:
             if(badForced.length)failures.push(`${name}: gallery asset load failed ${badForced.map(x=>x.path).join(', ')}`);
             await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
             await page.waitForTimeout(500);
-            const s=await page.evaluate(()=>({width:document.documentElement.scrollWidth,viewport:innerWidth,height:document.documentElement.scrollHeight,brokenImages:[...document.images].filter(i=>i.complete&&i.naturalWidth===0).map(i=>i.currentSrc||i.src),text:document.body.innerText,works:document.querySelectorAll('.mct-work-tile').length}));
+            const s=await page.evaluate(()=>({
+              width:document.documentElement.scrollWidth,
+              viewport:innerWidth,
+              height:document.documentElement.scrollHeight,
+              brokenImages:[...document.images].filter(i=>i.complete&&i.naturalWidth===0).map(i=>i.currentSrc||i.src),
+              text:document.body.innerText,
+              works:document.querySelectorAll('.mct-work-tile').length,
+              heroSrc:document.querySelector('.dct-hero-portrait img')?.getAttribute('src')||'',
+              aboutSrc:document.querySelector('.mct-about-portrait img')?.getAttribute('src')||'',
+              favicon:document.querySelector('link[rel="icon"]')?.getAttribute('href')||document.querySelector('link[rel="shortcut icon"]')?.getAttribute('href')||''
+            }));
             if(s.width>s.viewport+2)failures.push(`${name}: horizontal overflow ${s.width}>${s.viewport}`);
             if(s.brokenImages.length)failures.push(`${name}: rendered broken images ${s.brokenImages.join(', ')}`);
-            for(const token of ['Нина','+7 985 777-26-36','Маникюр женский аппаратный','101'])if(!s.text.includes(token))failures.push(`${name}: missing ${token}`);
+            for(const token of ['Нина','+7 985 777-26-36','Маникюр женский аппаратный','101','2+','Сервис и возможности','Профессиональный маникюр и педикюр'])if(!s.text.includes(token))failures.push(`${name}: missing ${token}`);
+            for(const removed of ['Удобства для визита','Всё необходимое для спокойного посещения'])if(s.text.includes(removed))failures.push(`${name}: old copy still present: ${removed}`);
+            if(!s.heroSrc.includes('/assets/client/glavnaya.jpg'))failures.push(`${name}: wrong hero image ${s.heroSrc}`);
+            if(!s.aboutSrc.includes('/assets/client/master.png'))failures.push(`${name}: wrong about image ${s.aboutSrc}`);
+            if(!s.favicon.includes('/favicon.svg'))failures.push(`${name}: wrong favicon ${s.favicon}`);
             if(!/1[\s\u00A0\u202F]*800[\s\u00A0\u202F]*₽/.test(s.text))failures.push(`${name}: first service price missing`);
             if(s.works<5)failures.push(`${name}: fewer than five portfolio works`);
             if(pageErrors.length)failures.push(`${name}: page errors ${pageErrors.join(' | ')}`);
-            report.push({name,viewport:`${width}x${height}`,pageWidth:s.width,pageHeight:s.height,works:s.works,assets:forced,brokenImages:s.brokenImages,pageErrors});
+            report.push({name,viewport:`${width}x${height}`,pageWidth:s.width,pageHeight:s.height,works:s.works,heroSrc:s.heroSrc,aboutSrc:s.aboutSrc,favicon:s.favicon,assets:forced,brokenImages:s.brokenImages,pageErrors});
             await page.evaluate(()=>window.scrollTo(0,0));
             await page.screenshot({path:`qa-${name}.png`,fullPage:true});
             await context.close();
