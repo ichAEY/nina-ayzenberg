@@ -1,38 +1,98 @@
 [
   {
-    "id": 32498100106,
-    "name": "Scan public Yandex prices",
-    "head_sha": "b01e587508932e3eeeadb4cf7f06402b0f3fca64",
+    "id": 32498349585,
+    "name": "Build and deploy Nina TANEM site",
+    "head_sha": "10d067348df3c4489bfac894ccb85791935584eb",
+    "status": "pending",
+    "conclusion": null,
+    "event": "push",
+    "run_number": 9,
+    "created_at": "2026-08-21T15:34:40Z",
+    "updated_at": "2026-08-21T15:34:41Z",
+    "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32498349585"
+  },
+  {
+    "id": 32498348506,
+    "name": ".github/workflows/fix-pages.yml",
+    "head_sha": "10d067348df3c4489bfac894ccb85791935584eb",
+    "status": "completed",
+    "conclusion": "failure",
+    "event": "push",
+    "run_number": 3,
+    "created_at": "2026-08-21T15:34:40Z",
+    "updated_at": "2026-08-21T15:34:40Z",
+    "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32498348506"
+  },
+  {
+    "id": 32498338671,
+    "name": "Dump workflow status",
+    "head_sha": "cb5e29709cfc3183d185a94cd3f83d45d6a89cf9",
     "status": "in_progress",
     "conclusion": null,
     "event": "push",
+    "run_number": 3,
+    "created_at": "2026-08-21T15:34:33Z",
+    "updated_at": "2026-08-21T15:34:37Z",
+    "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32498338671"
+  },
+  {
+    "id": 32498338666,
+    "name": "Build and deploy Nina TANEM site",
+    "head_sha": "cb5e29709cfc3183d185a94cd3f83d45d6a89cf9",
+    "status": "in_progress",
+    "conclusion": null,
+    "event": "push",
+    "run_number": 8,
+    "created_at": "2026-08-21T15:34:33Z",
+    "updated_at": "2026-08-21T15:34:37Z",
+    "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32498338666"
+  },
+  {
+    "id": 32498337283,
+    "name": ".github/workflows/fix-pages.yml",
+    "head_sha": "cb5e29709cfc3183d185a94cd3f83d45d6a89cf9",
+    "status": "completed",
+    "conclusion": "failure",
+    "event": "push",
+    "run_number": 2,
+    "created_at": "2026-08-21T15:34:32Z",
+    "updated_at": "2026-08-21T15:34:32Z",
+    "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32498337283"
+  },
+  {
+    "id": 32498100106,
+    "name": "Scan public Yandex prices",
+    "head_sha": "b01e587508932e3eeeadb4cf7f06402b0f3fca64",
+    "status": "completed",
+    "conclusion": "success",
+    "event": "push",
     "run_number": 6,
     "created_at": "2026-08-21T15:31:57Z",
-    "updated_at": "2026-08-21T15:32:02Z",
+    "updated_at": "2026-08-21T15:32:28Z",
     "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32498100106"
   },
   {
     "id": 32498100040,
     "name": "Build and deploy Nina TANEM site",
     "head_sha": "b01e587508932e3eeeadb4cf7f06402b0f3fca64",
-    "status": "in_progress",
-    "conclusion": null,
+    "status": "completed",
+    "conclusion": "failure",
     "event": "push",
     "run_number": 7,
     "created_at": "2026-08-21T15:31:57Z",
-    "updated_at": "2026-08-21T15:32:02Z",
+    "updated_at": "2026-08-21T15:32:40Z",
     "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32498100040"
   },
   {
     "id": 32498100010,
     "name": "Dump workflow status",
     "head_sha": "b01e587508932e3eeeadb4cf7f06402b0f3fca64",
-    "status": "in_progress",
-    "conclusion": null,
+    "status": "completed",
+    "conclusion": "success",
     "event": "push",
     "run_number": 2,
     "created_at": "2026-08-21T15:31:57Z",
-    "updated_at": "2026-08-21T15:32:02Z",
+    "updated_at": "2026-08-21T15:32:12Z",
     "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32498100010"
   },
   {
@@ -178,17 +238,5 @@
     "created_at": "2026-08-21T15:19:18Z",
     "updated_at": "2026-08-21T15:21:10Z",
     "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32496953119"
-  },
-  {
-    "id": 32496755701,
-    "name": "Build and deploy Nina TANEM site",
-    "head_sha": "c8346fcbeb3b06280057763cbbc859119e98df60",
-    "status": "completed",
-    "conclusion": "failure",
-    "event": "push",
-    "run_number": 1,
-    "created_at": "2026-08-21T15:17:02Z",
-    "updated_at": "2026-08-21T15:19:01Z",
-    "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32496755701"
   }
 ]
