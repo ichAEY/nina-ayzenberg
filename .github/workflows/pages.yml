@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -17,6 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout client repository
@@ -24,7 +25,7 @@ jobs:
         with:
           path: customer
 
-      - name: Validate client files
+      - name: Validate client files and data
         shell: bash
         run: |
           set -euo pipefail
@@ -34,7 +35,16 @@ jobs:
           for n in {1..9}; do test -f "customer/$n.png"; done
           COUNT=$(find customer -maxdepth 1 -type f -regex '.*/[0-9]+\.png' | wc -l | tr -d ' ')
           test "$COUNT" -eq 9
-          node --input-type=module -e "import('./customer/site-data.mjs').then(({default:s}) => { if (s.master.name !== 'Нина' || s.images.gallery.length !== 9 || !s.links.bookingUrl) process.exit(1); })"
+          node --input-type=module <<'NODE'
+          import site from './customer/site-data.mjs';
+          const expectedServices = 10;
+          const totalServices = (site.services?.manicure?.length || 0) + (site.services?.pedicure?.length || 0);
+          if (site.master?.name !== 'Нина') throw new Error('Wrong master name');
+          if (site.images?.gallery?.length !== 9) throw new Error('Gallery must contain 9 images');
+          if (!site.links?.bookingUrl) throw new Error('Booking URL is missing');
+          if (totalServices !== expectedServices) throw new Error(`Expected ${expectedServices} services, got ${totalServices}`);
+          if (site.reputation?.rating !== '5,0' || site.reputation?.reviewCount !== '101') throw new Error('Reputation data is stale');
+          NODE
 
       - name: Checkout pinned TANEM visual base
         uses: actions/checkout@v4
@@ -159,7 +169,6 @@ jobs:
 
       - name: Prepare clean build
         working-directory: template
-        shell: bash
         run: |
           rm -rf public/_next
           node - <<'NODE'
@@ -178,21 +187,15 @@ jobs:
         working-directory: template
         run: npx next build
 
-      - name: Static integrity QA
+      - name: Static asset integrity QA
         working-directory: template
         shell: bash
         run: |
           set -euo pipefail
-          test -f out/index.html
-          test -f out/assets/client/master.png
-          test -f out/assets/client/glavnaya.jpg
-          for n in {1..9}; do test -f "out/assets/client/portfolio/$n.png"; done
-          grep -q 'Нина' out/index.html
-          grep -q '985' out/index.html
-          grep -q 'Маникюр женский аппаратный' out/index.html
-          grep -q '1800' out/index.html
-          grep -q '3500' out/index.html
-          ! grep -qiE '>undefined<|>null<' out/index.html
+          test -s out/index.html
+          test -s out/assets/client/master.png
+          test -s out/assets/client/glavnaya.jpg
+          for n in {1..9}; do test -s "out/assets/client/portfolio/$n.png"; done
 
       - name: Browser QA and screenshots
         working-directory: template
@@ -211,6 +214,8 @@ jobs:
 
           node --input-type=module <<'NODE'
           import { chromium } from 'playwright';
+          import fs from 'node:fs';
+
           const basePath = process.env.SITE_BASE_PATH || '';
           const url = `http://127.0.0.1:4173${basePath}/`;
           const cases = [
@@ -227,9 +232,10 @@ jobs:
             const page = await context.newPage();
             const pageErrors = [];
             page.on('pageerror', error => pageErrors.push(String(error)));
+
             await page.goto(url, { waitUntil: 'networkidle' });
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await page.waitForTimeout(250);
+            await page.waitForTimeout(350);
             await page.evaluate(() => window.scrollTo(0, 0));
 
             const state = await page.evaluate(() => ({
@@ -238,7 +244,6 @@ jobs:
               height: document.documentElement.scrollHeight,
               brokenImages: [...document.images].filter(img => !img.complete || img.naturalWidth === 0).map(img => img.currentSrc || img.src),
               text: document.body.innerText,
-              serviceRows: document.querySelectorAll('.mct-service-row').length,
               workTiles: document.querySelectorAll('.mct-work-tile').length,
             }));
 
@@ -246,102 +251,33 @@ jobs:
             if (state.brokenImages.length) failures.push(`${name}: broken images: ${state.brokenImages.join(', ')}`);
             if (!state.text.includes('Нина')) failures.push(`${name}: master name missing`);
             if (!state.text.includes('+7 985 777-26-36')) failures.push(`${name}: phone missing`);
-            if (!state.text.includes('Маникюр женский аппаратный')) failures.push(`${name}: exact service list missing`);
+            if (!state.text.includes('Маникюр женский аппаратный')) failures.push(`${name}: exact price list missing`);
+            if (!state.text.includes('1 800 ₽')) failures.push(`${name}: service price missing`);
+            if (!state.text.includes('101')) failures.push(`${name}: current review count missing`);
+            if (state.workTiles < 5) failures.push(`${name}: portfolio preview has fewer than 5 works`);
             if (pageErrors.length) failures.push(`${name}: page errors: ${pageErrors.join(' | ')}`);
 
-            report.push({ name, viewport: `${width}x${height}`, pageWidth: state.width, pageHeight: state.height, serviceRows: state.serviceRows, workTiles: state.workTiles, brokenImages: state.brokenImages, pageErrors });
-            await page.screenshot({ path: `qa-${name}.jpg`, fullPage: true, type: 'jpeg', quality: 62 });
+            report.push({ name, viewport: `${width}x${height}`, pageWidth: state.width, pageHeight: state.height, workTiles: state.workTiles, brokenImages: state.brokenImages, pageErrors });
+            await page.screenshot({ path: `qa-${name}.png`, fullPage: true });
             await context.close();
           }
 
           await browser.close();
-          await import('node:fs').then(fs => fs.writeFileSync('qa-browser-report.json', JSON.stringify({ failures, report }, null, 2)));
+          fs.writeFileSync('qa-browser-report.json', JSON.stringify({ failures, report }, null, 2));
           if (failures.length) {
             console.error(failures.join('\n'));
             process.exit(1);
           }
           NODE
 
-      - name: Build compact visual inspection sheet
-        working-directory: template
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --quiet Pillow
-          python3 - <<'PY'
-          from PIL import Image, ImageOps, ImageDraw
-          from pathlib import Path
-          import hashlib, json
-
-          files = [
-              ('DESKTOP 1440×900', Path('qa-desktop.jpg')),
-              ('LAPTOP 1366×768', Path('qa-laptop.jpg')),
-              ('MOBILE 390×844', Path('qa-mobile.jpg')),
-          ]
-          target_w = 900
-          blocks = []
-          for label, path in files:
-              im = Image.open(path).convert('RGB')
-              scale = min(1.0, target_w / im.width)
-              im = im.resize((round(im.width * scale), round(im.height * scale)), Image.Resampling.LANCZOS)
-              canvas = Image.new('RGB', (target_w, im.height + 54), 'white')
-              x = (target_w - im.width) // 2
-              canvas.paste(im, (x, 54))
-              ImageDraw.Draw(canvas).text((18, 18), label, fill='black')
-              blocks.append(canvas)
-
-          gap = 24
-          total_h = sum(x.height for x in blocks) + gap * (len(blocks)-1)
-          sheet = Image.new('RGB', (target_w, total_h), 'white')
-          y = 0
-          for block in blocks:
-              sheet.paste(block, (0, y))
-              y += block.height + gap
-
-          # Keep the handoff compact while preserving enough detail for a visual audit.
-          if sheet.height > 11500:
-              scale = 11500 / sheet.height
-              sheet = sheet.resize((round(sheet.width * scale), 11500), Image.Resampling.LANCZOS)
-          sheet.save('qa-contact-sheet.jpg', quality=38, optimize=True, progressive=True)
-
-          data = Path('qa-contact-sheet.jpg').read_bytes()
-          Path('qa-contact-sheet.b64').write_text(__import__('base64').b64encode(data).decode('ascii'))
-          report = json.loads(Path('qa-browser-report.json').read_text())
-          manifest = {
-              'sha256': hashlib.sha256(data).hexdigest(),
-              'bytes': len(data),
-              'size': list(sheet.size),
-              'browser_report': report,
-          }
-          Path('qa-visual-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-          PY
-
-          rm -rf ../customer/qa-export
-          mkdir -p ../customer/qa-export
-          split -b 40000 -d -a 3 qa-contact-sheet.b64 ../customer/qa-export/chunk-
-          cp qa-visual-manifest.json ../customer/qa-export/manifest.json
-
-      - name: Publish QA inspection handoff
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd customer
-          git config user.name "tanem-qa"
-          git config user.email "actions@users.noreply.github.com"
-          git add qa-export
-          git diff --cached --quiet && exit 0
-          git commit -m "Publish Nina visual QA handoff"
-          git pull --rebase
-          git push
-
-      - name: Upload QA screenshots
+      - name: Upload visual QA
         uses: actions/upload-artifact@v4
         with:
           name: nina-visual-qa
           path: |
-            template/qa-desktop.jpg
-            template/qa-laptop.jpg
-            template/qa-mobile.jpg
+            template/qa-desktop.png
+            template/qa-laptop.png
+            template/qa-mobile.png
             template/qa-browser-report.json
           retention-days: 7
 
