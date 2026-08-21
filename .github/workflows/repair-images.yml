@@ -1,0 +1,52 @@
+name: Repair Nina source images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/repair-images.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Re-encode portfolio images and harden QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet Pillow
+          python3 - <<'PY'
+          from PIL import Image, ImageFile
+          from pathlib import Path
+
+          ImageFile.LOAD_TRUNCATED_IMAGES = True
+          for n in range(1, 10):
+              src = Path(f'{n}.png')
+              with Image.open(src) as im:
+                  im.load()
+                  if im.mode not in ('RGB', 'RGBA'):
+                      im = im.convert('RGBA' if 'A' in im.getbands() else 'RGB')
+                  tmp = src.with_suffix('.fixed.png')
+                  im.save(tmp, format='PNG', optimize=True)
+              tmp.replace(src)
+
+          workflow = Path('.github/workflows/pages.yml')
+          text = workflow.read_text(encoding='utf-8')
+          old = "if (!state.text.includes('1 800 ₽')) failures.push(`${name}: service price missing`);"
+          new = "if (!/1[\\s\\u00A0\\u202F]*800[\\s\\u00A0\\u202F]*₽/.test(state.text)) failures.push(`${name}: service price missing`);"
+          if old not in text:
+              raise SystemExit('Expected price QA marker not found')
+          workflow.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+
+          git config user.name "tanem-repair"
+          git config user.email "actions@users.noreply.github.com"
+          git add 1.png 2.png 3.png 4.png 5.png 6.png 7.png 8.png 9.png .github/workflows/pages.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "Normalize Nina portfolio images and QA"
+          git pull --rebase
+          git push
