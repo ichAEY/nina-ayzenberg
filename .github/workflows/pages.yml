@@ -73,7 +73,6 @@ jobs:
           from PIL import Image, ImageFile
           from pathlib import Path
           ImageFile.LOAD_TRUNCATED_IMAGES=True
-
           def clean(src,dst):
               with Image.open(src) as im:
                   im.load()
@@ -81,10 +80,8 @@ jobs:
                       im=im.convert('RGBA' if 'A' in im.getbands() else 'RGB')
                   Path(dst).parent.mkdir(parents=True,exist_ok=True)
                   im.save(dst,format='PNG',optimize=True)
-
           clean('customer/master.png','template/public/assets/client/master.png')
-          for n in range(1,10):
-              clean(f'customer/{n}.png',f'template/public/assets/client/portfolio/{n}.png')
+          for n in range(1,10): clean(f'customer/{n}.png',f'template/public/assets/client/portfolio/{n}.png')
           PY
           if [ -f customer/CNAME ]; then
             cp customer/CNAME template/public/CNAME
@@ -165,16 +162,27 @@ jobs:
             const page=await context.newPage(),pageErrors=[];
             page.on('pageerror',e=>pageErrors.push(String(e)));
             await page.goto(url,{waitUntil:'networkidle'});
+            const forced=await page.evaluate(async basePath=>{
+              const paths=['master.png','glavnaya.jpg',...Array.from({length:9},(_,i)=>`portfolio/${i+1}.png`)];
+              return await Promise.all(paths.map(path=>new Promise(resolve=>{
+                const img=new Image();
+                img.onload=()=>resolve({path,ok:true,width:img.naturalWidth,height:img.naturalHeight});
+                img.onerror=()=>resolve({path,ok:false,width:0,height:0});
+                img.src=`${basePath}/assets/client/${path}`;
+              })));
+            },base);
+            const badForced=forced.filter(x=>!x.ok||x.width<1||x.height<1);
+            if(badForced.length)failures.push(`${name}: gallery asset load failed ${badForced.map(x=>x.path).join(', ')}`);
             await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
             await page.waitForTimeout(500);
-            const s=await page.evaluate(()=>({width:document.documentElement.scrollWidth,viewport:innerWidth,height:document.documentElement.scrollHeight,brokenImages:[...document.images].filter(i=>!i.complete||i.naturalWidth===0).map(i=>i.currentSrc||i.src),text:document.body.innerText,works:document.querySelectorAll('.mct-work-tile').length}));
+            const s=await page.evaluate(()=>({width:document.documentElement.scrollWidth,viewport:innerWidth,height:document.documentElement.scrollHeight,brokenImages:[...document.images].filter(i=>i.complete&&i.naturalWidth===0).map(i=>i.currentSrc||i.src),text:document.body.innerText,works:document.querySelectorAll('.mct-work-tile').length}));
             if(s.width>s.viewport+2)failures.push(`${name}: horizontal overflow ${s.width}>${s.viewport}`);
-            if(s.brokenImages.length)failures.push(`${name}: broken images ${s.brokenImages.join(', ')}`);
+            if(s.brokenImages.length)failures.push(`${name}: rendered broken images ${s.brokenImages.join(', ')}`);
             for(const token of ['Нина','+7 985 777-26-36','Маникюр женский аппаратный','101'])if(!s.text.includes(token))failures.push(`${name}: missing ${token}`);
             if(!/1[\s\u00A0\u202F]*800[\s\u00A0\u202F]*₽/.test(s.text))failures.push(`${name}: first service price missing`);
             if(s.works<5)failures.push(`${name}: fewer than five portfolio works`);
             if(pageErrors.length)failures.push(`${name}: page errors ${pageErrors.join(' | ')}`);
-            report.push({name,viewport:`${width}x${height}`,pageWidth:s.width,pageHeight:s.height,works:s.works,brokenImages:s.brokenImages,pageErrors});
+            report.push({name,viewport:`${width}x${height}`,pageWidth:s.width,pageHeight:s.height,works:s.works,assets:forced,brokenImages:s.brokenImages,pageErrors});
             await page.evaluate(()=>window.scrollTo(0,0));
             await page.screenshot({path:`qa-${name}.png`,fullPage:true});
             await context.close();
@@ -185,6 +193,7 @@ jobs:
           NODE
 
       - name: Upload visual QA
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nina-visual-qa
@@ -193,6 +202,7 @@ jobs:
             template/qa-laptop.png
             template/qa-mobile.png
             template/qa-browser-report.json
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Setup Pages
