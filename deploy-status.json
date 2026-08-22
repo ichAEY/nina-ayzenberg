@@ -1,7 +1,7 @@
 {
-  "run_id": 32507623853,
-  "run_number": 23,
-  "conclusion": "success",
-  "head_sha": "b97ea6bbe1ea650a77034f5f8639d0f5d26268c0",
-  "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32507623853"
+  "run_id": 32577056733,
+  "run_number": 24,
+  "conclusion": "cancelled",
+  "head_sha": "fd881301edebc3a402c3b72bc4b95fdf437f3118",
+  "html_url": "https://github.com/ichAEY/nina-ayzenberg/actions/runs/32577056733"
 }
