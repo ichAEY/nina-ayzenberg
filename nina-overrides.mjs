@@ -15,4 +15,13 @@ if (!source.includes("Сервис и возможности")) {
 }
 
 fs.writeFileSync(componentPath, source, "utf8");
+
+const stylesPath = "app/globals.css";
+let styles = fs.readFileSync(stylesPath, "utf8");
+const marker = "/* Nina mobile about skills refinement */";
+if (!styles.includes(marker)) {
+  styles += `\n\n${marker}\n@media (max-width: 767px) {\n  .mct-about-list li {\n    color: #5b5551;\n    font-size: 10.75px;\n    font-weight: 500;\n    line-height: 1.42;\n    letter-spacing: -0.01em;\n    padding-top: 10px;\n  }\n}\n`;
+}
+fs.writeFileSync(stylesPath, styles, "utf8");
+
 console.log("Nina-specific UI overrides applied and verified.");
